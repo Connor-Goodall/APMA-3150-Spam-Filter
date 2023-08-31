@@ -1,0 +1,498 @@
+---
+title: "APMA 3150 Final Project"
+author: "Jack Chandler, Connor Goodall, Daniel Lower-Basch, Harshil Patel"
+date: "2022-12-09"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r result='hide', message=FALSE, warning=FALSE, include=FALSE}
+# Import libraries
+install.packages("spelling")
+install.packages("stringr")
+install.packages("VGAM")
+install.packages("tree")
+install.packages("cluster")
+install.packages("factoextra")
+
+# spelling - text spellcheck
+library(spelling)
+
+# stringr - String library to count instances of words in text
+library(stringr)
+
+# VGAM (Vector Generalized  Linear and Additive Models) - classification modelling functions
+library(VGAM)
+```
+
+```{r}
+emails <- read.csv("emails.csv")
+```
+
+```{r}
+# Split by Subject and Content
+subject = c()
+content = c()
+for (row in 1:nrow(emails))
+{
+  index = unlist(gregexpr("  ", emails[row,1]))[1]
+  subject[row] = substr(emails[row,1], 1, index)
+  content[row] = substr(emails[row,1], index, nchar(emails[1,1]))
+}
+emails = cbind(emails, subject, content)
+```
+
+```{r}
+# Spellcheck Subject and Content
+spellcheckErrorsSubject = c()
+spellcheckErrorsContent = c()
+for (row in 1:nrow(emails))
+{
+  spellcheckErrorsSubject[row] = sum(unlist(spell_check_text(emails[row,'subject'])$found))
+  spellcheckErrorsContent[row] = sum(unlist(spell_check_text(emails[row,'content'])$found))
+}
+emails = cbind(emails, spellcheckErrorsSubject, spellcheckErrorsContent)
+```
+
+```{r}
+#Counts the amount of numbers for each email and determines if the email has a number or not
+countDigits = c()
+containsNumber = c()
+for (row in 1:nrow(emails)){
+  countDigits[row] = 
+    str_count(emails[row,1], "0") + 
+    str_count(emails[row,1], "1") + 
+    str_count(emails[row,1], "2") + 
+    str_count(emails[row,1], "3") + 
+    str_count(emails[row,1], "4") + 
+    str_count(emails[row,1], "5") + 
+    str_count(emails[row,1], "6") + 
+    str_count(emails[row,1], "7") + 
+    str_count(emails[row,1], "8") + 
+    str_count(emails[row,1], "9")
+  
+  containsNumber = ifelse(countDigits > 0, 1, 0)
+}
+emails = cbind(emails, countDigits, containsNumber)
+```
+
+
+```{r}
+#Counts the amount of money for each email and determines if the email has any text about money
+countMoney = c()
+containsMoney = c()
+for (row in 1:nrow(emails)){
+  countMoney[row] = 
+    str_count(emails[row,1], "\\$") + 
+    str_count(emails[row,1], "dollars")
+  
+  containsMoney = ifelse(countMoney > 0, 1, 0)
+}
+emails = cbind(emails, countMoney, containsMoney)
+```
+
+```{r}
+#Counts the amount of text that contains the word "unsub" for each email and determines if the emails has any text about unsubscriptions
+countUnsub = c()
+containsUnsub = c()
+for (row in 1:nrow(emails)){
+  countUnsub[row] = str_count(emails[row, 1], "unsub")
+  
+  containsUnsub = ifelse(countUnsub > 0, 1, 0)
+}
+emails = cbind(emails, countUnsub, containsUnsub)
+```
+
+```{r}
+#Counts the number of links for each email and determines if the email has any links
+countLink = c()
+containsLink = c()
+for (row in 1:nrow(emails)){
+  countLink[row] = 
+    str_count(emails[row,1], "http") + 
+    str_count(emails[row,1], "www") + 
+    str_count(emails[row,1], "https")
+  
+  containsLink = ifelse(countLink > 0, 1, 0)
+}
+emails = cbind(emails, countLink, containsLink)
+```
+
+```{r}
+#Counts the amount of words overall, for the subject, and for the content
+wordCount = c()
+subjectCount = c()
+contentCount = c()
+for (row in 1:nrow(emails)){
+  wordCount[row] = sapply(strsplit(emails[row,1], " "), length)
+  subjectCount[row] = sapply(strsplit(emails[row,"subject"], " "), length)
+  contentCount[row] = sapply(strsplit(emails[row,"content"], " "), length) - 1
+}
+emails = cbind(emails, wordCount, subjectCount, contentCount)
+```
+
+```{r}
+#Counts the amount of each common word for each email and determines if the email contains each common word
+commonWords = c("free ", "advertisement", "opt ", "click", "sale", "cheap", "buy", "order", "collect", "form ", "deal", "offer", "trial")
+for(word in 1:length(commonWords)){
+  countword = c()
+  containsWord = c()
+  for (row in 1:nrow(emails)){
+    countword[row] = str_count(emails[row, 1], commonWords[word])
+    
+    containsWord = ifelse(countword > 0, 1, 0)
+  }
+  emails = cbind(emails, countword, containsWord)
+  colnames(emails)[(length(colnames(emails)) - 1):length(colnames(emails))] = c(paste("Count Common Word:", commonWords[word]), paste("Contains Common Word:", commonWords[word]))
+}
+```
+
+```{r}
+View(emails)
+```
+
+
+## Classification
+
+Classification is a form of supervised learning in which discrete metrics are used to idenfity input data as a particular class.
+
+In this case, the classes observed are spam emails and authentic emails.
+
+```{r warning=FALSE}
+# Fit linear model
+classification_linear_fit   <- vglm(emails$spam~., family=multinomial, data=emails[!names(emails) %in% c("text","subject", "content")])
+# Fit additive model
+classification_additive_fit <- vgam(emails$spam~., family=multinomial, data=emails[!names(emails) %in% c("text","subject", "content")])
+
+# summarize the fit
+summary(  classification_linear_fit)
+summary(classification_additive_fit)
+```
+
+```{r warning=FALSE}
+# Predict the values of the dataset using the generated model.
+probability_linear   <- predictvglm(classification_linear_fit,    emails[!names(emails) %in% c("text","spam","subject", "content")], type="response")
+probability_additive <- predict.vgam(classification_additive_fit, emails[!names(emails) %in% c("text","spam","subject", "content")], type="response")
+
+# The class with highest probability is selected to be the prediction of the model.
+prediction_linear   <- apply(  probability_linear, 1, which.max)
+prediction_additive <- apply(probability_additive, 1, which.max)
+```
+
+Accuracy of the prediction may be derived by comparing the prediction fit to the emails dataset.
+```{r}
+# Adjust values to predicted outcomes
+prediction_linear[prediction_linear == 1] = "Predicted Authentic"
+prediction_linear[prediction_linear == 2] = "Predicted Spam"
+
+prediction_additive[prediction_additive == 1] = "Predicted Authentic"
+prediction_additive[prediction_additive == 2] = "Predicted Spam"
+
+reference = emails$spam
+reference[reference == 0] = "Authentic Emails"
+reference[reference == 1] = "Spam Emails"
+
+# Create a table of predictions to the reference
+vglm_accuracy = table(prediction_linear, reference)
+vglm_accuracy
+table(prediction_additive, reference)
+```
+
+This is converted to proportions to observe the accuracy rates.
+```{r}
+# Convert the table to proportions with prop.table
+vglm_proportional_accuracy = prop.table(vglm_accuracy)
+addmargins(vglm_proportional_accuracy)
+```
+
+An important observation regarding the performance of the classification is the base rate fallacy,
+in which the rate of spam emails influences the relative costs of false positives and false negatives.
+If spam emails were more common in practice, then more false negatives might become a larger cost than the false positives.
+In the context of emails, however, the user would want no false positives to ensure they do not miss important mail that
+was filtered as spam.
+```{r}
+dataset_spam_rate = sum(emails$spam) / length(emails$spam)
+dataset_spam_rate
+```
+
+```{r}
+plot(subjectCount, spellcheckErrorsSubject, col=c("red","blue")[unclass(emails$spam + 1)])
+plot(contentCount, spellcheckErrorsContent, col=c("red","blue")[unclass(emails$spam + 1)])
+plot(wordCount, countMoney, col=c("red","blue")[unclass(emails$spam + 1)])
+```
+
+## Correlation
+
+```{r}
+#Put the spam column into its own vector since it is the dependent variable and remove the text, subject, and content columns since they can not be used for correlation due to them not being numeric.
+spam = emails[2]
+correlationEmails = emails[-2]
+correlationEmails = correlationEmails[-3]
+correlationEmails = correlationEmails[-2]
+correlationEmails = correlationEmails[-1]
+```
+
+```{r}
+#For each column in the dataset, find its correlation with spam detection
+correlation = c()
+for(i in 1:ncol(correlationEmails)) { 
+  correlation[i] = cor(correlationEmails[,i], spam)
+}
+```
+
+```{r}
+#Show the biggest negative correlation to the biggest positive correlation
+correlationList = data.frame(correlation, colnames(correlationEmails))
+correlationList = correlationList[order(correlation),]
+View(correlationList)
+```
+
+```{r}
+#For each column in the dataset, find its spearman correlation with spam detection
+spearmanCorrelation = c()
+for(i in 1:ncol(correlationEmails)) { 
+  spearmanCorrelation[i] = cor(correlationEmails[,i], spam, method = "spearman")
+}
+```
+
+```{r}
+#Show the biggest negative spearman correlation to the biggest spearman positive correlation
+spearmanCorrelationList = data.frame(spearmanCorrelation, colnames(correlationEmails))
+spearmanCorrelationList = spearmanCorrelationList[order(spearmanCorrelation),]
+View(spearmanCorrelationList)
+```
+
+```{r}
+#For each column in the dataset, find its kendall correlation with spam detection
+kendallCorrelation = c()
+for(i in 1:ncol(correlationEmails)) { 
+  kendallCorrelation[i] = cor(correlationEmails[,i], spam, method = "kendall")
+}
+```
+
+```{r}
+#Show the biggest negative kendall correlation to the biggest kendall positive correlation
+kendallCorrelationList = data.frame(kendallCorrelation, colnames(correlationEmails))
+kendallCorrelationList = kendallCorrelationList[order(kendallCorrelation),]
+View(kendallCorrelationList)
+```
+
+## Trees
+
+```{r}
+#Makes a vector that has a yes or no depending on if the spam column is 1 or 0 and adds it to the dataset. Removes the spam, the text, the subject, and the content columns from the dataset. 
+Spam = ifelse(spam == 1, "Yes", "No")
+treeEmails = emails[-2]
+treeEmails = treeEmails[-3]
+treeEmails = treeEmails[-2]
+treeEmails = treeEmails[-1]
+treeEmails = data.frame(treeEmails, Spam)
+```
+
+```{r}
+#Turns the newly created spam vector into a factor
+treeEmails$spam = as.factor(treeEmails$spam)
+```
+
+```{r}
+#Creates a tree with the spam column being the dependent variable and the other columns the independent variables
+library(tree)
+tree.emails = tree(spam~., treeEmails)
+```
+
+```{r}
+#Shows the summary of the tree
+summary(tree.emails)
+```
+
+```{r}
+#Shows what the tree looks like with its nodes
+plot(tree.emails)
+text(tree.emails, cex = 0.4)
+```
+
+```{r}
+#Shows the logic behind the tree and its nodes
+tree.emails
+```
+
+```{r}
+#Creates a train set and a test set. Uses the train set to train the tree model to improve its accuracy. Uses the trained tree model to predict the detection of spam for the test set.
+set.seed(14)
+train = sample(1:nrow(treeEmails), nrow(treeEmails)/2)
+emails.test = treeEmails[-train,]
+Spam.test = Spam[-train]
+tree.emails = tree(spam~., treeEmails, subset = train)
+tree.pred = predict(tree.emails, emails.test, type = "class")
+table(tree.pred, Spam.test)
+
+```
+
+```{r}
+# The accuracy of the trained tree model on the test set was 84.6%.
+(1926 + 497)/2864
+```
+
+```{r}
+#Find the best number of nodes for the tree in order to prune it. In this case, the best number of nodes was 13.
+set.seed(14)
+cv.emails = cv.tree(tree.emails, FUN = prune.misclass)
+par(mfrow = c(1,2))
+plot(cv.emails$size, cv.emails$dev, type = "b")
+```
+
+```{r}
+#Create the prune tree and show what it looks like with its nodes
+prune.emails = prune.misclass(tree.emails, best = 13)
+plot(prune.emails)
+text(prune.emails, cex = 0.5)
+```
+
+```{r}
+#Show the logic behind the pruned tree and its nodes
+prune.emails
+```
+
+
+```{r}
+#Used the pruned tree model on the test set to predict the spam detection 
+prunetree.pred = predict(prune.emails, emails.test, type = "class")
+table(prunetree.pred, Spam.test)
+```
+
+```{r}
+#The accuracy of the pruned tree model on the test set is 84.6%.
+(1926+497)/2864
+```
+
+## Clustering
+```{r}
+#Removes the spam, the text, the subject, and the content columns from the dataset. Perform PCA on the remaining dataset and show the summary
+library(cluster)
+library(factoextra)
+clusteringEmails = emails[-2]
+clusteringEmails = clusteringEmails[-3]
+clusteringEmails = clusteringEmails[-2]
+clusteringEmails = clusteringEmails[-1]
+pr.out = prcomp(clusteringEmails, scale = TRUE)
+summary(pr.out)
+```
+
+```{r}
+#Plots the variance explained by each principal component
+plot(pr.out)
+plot(pr.out$sdev^2)
+```
+
+```{r}
+#Plot the PVE of each principal component and the cumulative PVE of each principal component. The plot shows that the first five principal components explain around 50% of the variance in the data.
+pve = 100*pr.out$sdev^2/sum(pr.out$sdev^2)
+par(mfrow=c(1,2))
+plot(pve, type="o", ylab="PVE", xlab="Principal Component", col =" blue ")
+plot(cumsum(pve), type="o", ylab="Cumulative PVE", xlab="Principal Component ", col =" brown3 ")
+```
+
+
+```{r}
+#Performs K-means clustering on the first five principal score vectors with k = 2
+km.out = kmeans(pr.out$x[, 1:5], 2, nstart = 20)
+plot(pr.out$x[, 1:2], col = (km.out$cluster + 1), main = "K-Means Clustering Results with K = 2", xlab = "", ylab = "", pch = 20, cex = 2)
+```
+
+```{r}
+#Standardize the variables to have mean zero and standard deviation one
+clusteringEmails = scale(clusteringEmails)
+emails.dist = dist(clusteringEmails)
+#Create the labels for hierarchical clustering
+spam.labels = ifelse(spam == 1, "Spam", "Not Spam")
+#Perform hierarchical clustering on the dataset and show the results in a table
+hc.out = hclust(emails.dist)
+hc.clusters = cutree(hc.out, 4)
+table(hc.clusters, spam.labels)
+```
+
+```{r}
+#Plot the results of the hierarchical clustering on the dataset with the labels
+plot(hc.out, labels = spam.labels, cex = .4)
+```
+
+
+```{r}
+#Perform hierarchical clustering on the first five principal component score vectors and show the results in a table
+hc.out = hclust(dist(pr.out$x[,1:5]))
+table(cutree(hc.out, 4), spam.labels)
+
+```
+
+```{r}
+#Plot the results of the hierarchical clustering on the first five score vectors with the labels
+plot(hc.out, labels = spam.labels, main="Hier. Clust. on First Five Score Vectors", cex=.5)
+```
+
+```{r}
+#Creates a K-means algorithm with k = 2 and plots it with 2 clusters
+k2 = kmeans(clusteringEmails, centers = 2, nstart = 25)
+fviz_cluster(k2, data = clusteringEmails, labelsize = 6)
+```
+
+## Logistic Regression
+
+Logistic regression is similar to the normal linear model however this model assumes the
+output to be classification into groups as opposed to on the continuous scale from 0 to N. This
+regression was also uniquely using all the variables with no form of selection to lower the
+variables to the most significant. 
+
+After creating the logistic model on the training set it was predicted to the test set and then 
+compared to the decision column to decide how bad the classification of spam email was to the 
+actual determination of emails. 
+
+The results for this model were actually quite good and it performed above the expectation with 
+a misclassification rate of 11.917% which is near the threshold of acceptable misclassification.
+
+
+```{r}
+library(caTools)
+
+# Split Data
+split<-sample.split(emails, SplitRatio = 0.8)
+split
+train = subset(emails, split == "TRUE")
+test = subset(emails,split == "FALSE")
+
+# Munge Data
+# These are categorial variables, so lets convert them to factors
+
+# perform logistic regression using all of the attributes in the model, and have binomial response value
+
+logModel <- glm(emails$spam~., family=binomial(link='logit'), data=emails[!names(emails) %in% c("text","subject", "content")])
+
+# Add more columns here: Count Common Word: ...
+
+summary(logModel) # get the summary of the model
+
+results <- predict(logModel, test, type='response')
+results
+
+
+confmatrix <- table(Actual_Value = test$spam, Predicted_Value = results > 0.5)
+confmatrix
+(98+45)/1200
+# 0.11917
+# Logistic reg. formula: decision ~ . : Misclassification rate = 0.11917 (11.917 %)
+
+results <- predict(logModel, train, type='response')
+results
+
+confmatrix <- table(Actual_Value = train$spam, Predicted_Value = results > 0.5)
+confmatrix
+
+(452+176)/4528
+# 0.13869
+
+# Logistic reg. formula: decision ~ . : Misclassification rate = 0.13869 (13.869 %)
+
+```
+
